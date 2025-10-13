@@ -59,6 +59,12 @@ flowchart TD
    * **原因**：需要在 NIC 控制路径上标识远程可访问的 MR，对应的请求/命令在硬件侧需要唯一 ID；纯本地访问则无需申请硬件资源，节省 ID 空间。
    * 分配失败时会发出告警、销毁自旋锁并返回 `-FI_ENOSPC`，防止资源泄漏。
 
+### `req_id` 的作用
+
+* `cxip_domain_ctrl_id_alloc()` 会把 `cxip_ctrl_req` 记录到域级的索引表里，并返回唯一的 `buffer_id`/`req_id`，供硬件事件回传时快速定位到原始控制请求；仅当 MR 允许远程访问时才需要占用该资源，纯本地 MR 则保持 `req_id=-1`。 【F:prov/cxi/src/cxip_dom.c†L323-L340】【F:prov/cxi/src/cxip_mr.c†L1386-L1399】
+* 启用或释放 MR 时，`req_id` 会作为 `buffer_id` 被写入 Cassini 目标命令（例如 `cxip_pte_append`、`cxip_pte_unlink`），这样硬件生成的 LINK/UNLINK/MATCH 等事件都能带着同一个标识回传。 【F:prov/cxi/src/cxip_mr.c†L179-L188】【F:prov/cxi/src/cxip_mr.c†L229-L236】
+* 控制事件在 `cxip_ep_ctrl_event_req()` 中根据 `event->tgt_long.buffer_id` 查回 `req_id` 对应的 `cxip_ctrl_req`，随后交给 `cxip_mr_cb` 更新 MR 状态；当 MR 关闭时也会调用 `cxip_domain_ctrl_id_free()` 释放该 ID，避免索引泄漏。 【F:prov/cxi/src/cxip_ctrl.c†L265-L338】【F:prov/cxi/src/cxip_mr.c†L1350-L1354】
+
 8. 其余基础字段初始化：
    * `mr->mr_id = -1;`：表示尚未拥有 provider 侧的 MR 句柄。
    * `mr->req.mr.mr = mr;`：把 MR 自身挂到控制请求对象，方便事件回调反查。
